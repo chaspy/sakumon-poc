@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Worksheet {
+  id          String    @id @default(uuid())
+  subject     String
+  unit        String
+  range       String?
+  sourcePdf   String?
+  createdAt   DateTime  @default(now())
+  version     Int       @default(1)
+  problems    Problem[]
+}
+
+model Problem {
+  id           String   @id @default(uuid())
+  worksheetId  String?
+  worksheet    Worksheet? @relation(fields: [worksheetId], references: [id])
+  type         String
+  prompt       String
+  choices      String?
+  answer       String
+  explanation  String?
+  difficulty   Int?
+  objectives   String?
+  rubric       String?
+  groundedFrom String?
+  meta         String?
+  position     Int?
+}
+
+model BankItem {
+  id       String   @id @default(uuid())
+  subject  String
+  unit     String
+  tags     String?
+  type     String
+  payload  String
+}

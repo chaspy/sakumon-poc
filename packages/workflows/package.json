@@ -1,0 +1,21 @@
+{
+  "name": "@sakumon/workflows",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsc -w -p tsconfig.json"
+  },
+  "dependencies": {
+    "@sakumon/schemas": "workspace:*",
+    "openai": "^4.52.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^22.5.4"
+  }
+}

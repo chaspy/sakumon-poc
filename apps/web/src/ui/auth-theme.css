@@ -127,3 +127,191 @@ body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Hira
 .qcard.skel { padding: 12px; }
 .qcard .skel-line { height: 12px; margin: 8px 0; }
 .qcard .skel-choice { height: 10px; margin: 6px 0 0 18px; width: 80%; }
+
+/* 問題カードのスタイル */
+.qcard {
+  background:#fff;
+  border-radius:12px;
+  padding:28px;
+  box-shadow:0 1px 3px rgba(0,0,0,0.05);
+  max-width:100%;
+}
+.qcard h4 {
+  margin:0 0 24px;
+  color:#333;
+  font-size:1.3rem;
+  font-weight:600;
+}
+.qcard ol {
+  padding-left:32px;
+  margin:16px 0;
+  line-height:1.8;
+}
+.qcard ol li {
+  margin-bottom:8px;
+}
+
+/* セクション別レイアウト */
+.qcard-section {
+  margin-bottom:28px;
+  padding:20px;
+  background:#f8f9fa;
+  border-radius:10px;
+  border:1px solid #e9ecef;
+}
+.qcard-section:last-child {
+  margin-bottom:0;
+}
+.section-label {
+  font-size:0.9rem;
+  font-weight:700;
+  color:#6c757d;
+  text-transform:uppercase;
+  letter-spacing:0.8px;
+  margin-bottom:12px;
+  display:flex;
+  align-items:center;
+}
+.section-label::after {
+  content:'';
+  flex:1;
+  height:1px;
+  background:#dee2e6;
+  margin-left:12px;
+}
+.section-content {
+  color:#212529;
+  font-size:1.05rem;
+  line-height:1.7;
+}
+.answer-section {
+  background:#e7f5ff;
+  border-color:#74c0fc;
+}
+.answer-text {
+  font-weight:600;
+  color:#1864ab;
+  font-size:1.1rem;
+}
+
+/* サジェストボタン */
+.suggest-buttons {
+  display:flex;
+  gap:10px;
+  margin-top:16px;
+  flex-wrap:wrap;
+}
+.btn-suggest {
+  padding:8px 16px;
+  border:1px solid #dee2e6;
+  background:#fff;
+  border-radius:8px;
+  font-size:0.9rem;
+  color:#495057;
+  cursor:pointer;
+  transition:all 0.2s;
+  white-space:nowrap;
+  flex:0 0 auto;
+  font-weight:500;
+}
+.btn-suggest:hover {
+  background:#007bff;
+  border-color:#007bff;
+  color:#fff;
+  transform:translateY(-2px);
+  box-shadow:0 4px 8px rgba(0,123,255,0.2);
+}
+.btn-suggest:active {
+  transform:translateY(0);
+  box-shadow:0 2px 4px rgba(0,123,255,0.2);
+}
+
+/* カードグリッドの調整 */
+.card-grid {
+  display:grid;
+  grid-template-columns:1fr;
+  gap:24px;
+  max-width:1000px;
+  margin:0 auto;
+}
+
+/* 編集ボタンのスタイル */
+.edit-btn {
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  background: transparent;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  color: #6c757d;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.qcard-section:hover .edit-btn {
+  opacity: 1;
+}
+
+.edit-btn:hover {
+  background: #f8f9fa;
+  border-color: #adb5bd;
+}
+
+/* 編集モードのスタイル */
+.edit-textarea {
+  width: 100%;
+  padding: 8px;
+  border: 2px solid #007bff;
+  border-radius: 6px;
+  font-size: 1rem;
+  line-height: 1.6;
+  resize: vertical;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(0,123,255,0.1);
+}
+
+.edit-input {
+  width: 100%;
+  padding: 8px;
+  border: 2px solid #007bff;
+  border-radius: 6px;
+  font-size: 1rem;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(0,123,255,0.1);
+}
+
+.edit-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.edit-save-btn {
+  padding: 6px 16px;
+  background: #007bff;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.edit-save-btn:hover {
+  background: #0056b3;
+}
+
+.edit-cancel-btn {
+  padding: 6px 16px;
+  background: #6c757d;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.edit-cancel-btn:hover {
+  background: #5a6268;
+}

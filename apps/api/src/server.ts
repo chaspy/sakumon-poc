@@ -168,6 +168,271 @@ app.post("/api/worksheets/:id/replace", async (req, res) => {
   res.json(ok({ item: deserializeProblem(updated) }))
 })
 
+app.post("/api/problems/:id/check-consistency", async (req, res) => {
+  const schema = z.object({
+    updatedField: z.enum(["prompt", "choices", "explanation"]).optional(),
+    newValue: z.union([z.string(), z.array(z.string())]).optional()
+  })
+  const p = schema.safeParse(req.body)
+  if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message))
+
+  const prob = await prisma.problem.findUnique({ where: { id: req.params.id } })
+  if (!prob) return res.status(404).json(err("NOT_FOUND", "problem not found"))
+
+  // 現在の問題をProblem型に変換
+  const currentProblem = {
+    type: prob.type as "mcq" | "free",
+    prompt: prob.prompt,
+    choices: parseOrNull<string[]>(prob.choices),
+    answer: prob.answer,
+    explanation: prob.explanation || undefined,
+    difficulty: prob.difficulty || undefined,
+    objectives: parseOrNull<string[]>(prob.objectives),
+    rubric: parseOrNull(prob.rubric),
+    meta: parseOrNull(prob.meta) || {}
+  }
+
+  // 更新後の問題を作成
+  let updatedProblem = { ...currentProblem }
+  if (p.data.updatedField && p.data.newValue !== undefined) {
+    if (p.data.updatedField === "choices" && Array.isArray(p.data.newValue)) {
+      updatedProblem.choices = p.data.newValue
+    } else if (p.data.updatedField === "prompt" && typeof p.data.newValue === "string") {
+      updatedProblem.prompt = p.data.newValue
+    } else if (p.data.updatedField === "explanation" && typeof p.data.newValue === "string") {
+      updatedProblem.explanation = p.data.newValue
+    }
+  }
+
+  try {
+    const { checkConsistency } = await import("@sakumon/workflows/src/consistency")
+    const result = await checkConsistency(
+      updatedProblem,
+      p.data.updatedField,
+      currentProblem
+    )
+    res.json(ok(result))
+  } catch (e: any) {
+    res.status(500).json(err("CONSISTENCY_CHECK_ERROR", e.message || "consistency check failed"))
+  }
+})
+
+app.post("/api/problems/:id/update", async (req, res) => {
+  const schema = z.object({
+    field: z.enum(["prompt", "choices", "answer", "explanation"]),
+    value: z.union([z.string(), z.array(z.string())])
+  })
+  const p = schema.safeParse(req.body)
+  if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message))
+
+  const prob = await prisma.problem.findUnique({ where: { id: req.params.id } })
+  if (!prob) return res.status(404).json(err("NOT_FOUND", "problem not found"))
+
+  // 更新データを準備
+  const updateData: any = {}
+  if (p.data.field === "choices" && Array.isArray(p.data.value)) {
+    updateData.choices = JSON.stringify(p.data.value)
+  } else if (p.data.field === "answer" && typeof p.data.value === "string") {
+    updateData.answer = p.data.value
+  } else if (p.data.field === "prompt" && typeof p.data.value === "string") {
+    updateData.prompt = p.data.value
+  } else if (p.data.field === "explanation" && typeof p.data.value === "string") {
+    updateData.explanation = p.data.value
+  }
+
+  try {
+    // DBを更新
+    const updated = await prisma.problem.update({
+      where: { id: req.params.id },
+      data: updateData
+    })
+
+    // 更新後の問題で整合性チェックを実行
+    const currentProblem = {
+      type: updated.type as "mcq" | "free",
+      prompt: updated.prompt,
+      choices: parseOrNull<string[]>(updated.choices),
+      answer: updated.answer,
+      explanation: updated.explanation || undefined,
+      difficulty: updated.difficulty || undefined,
+      objectives: parseOrNull<string[]>(updated.objectives),
+      rubric: parseOrNull(updated.rubric),
+      meta: parseOrNull(updated.meta) || {}
+    }
+
+    const { checkConsistency } = await import("@sakumon/workflows/src/consistency")
+    const consistencyResult = await checkConsistency(currentProblem)
+
+    res.json(ok({
+      updated: deserializeProblem(updated),
+      consistency: consistencyResult
+    }))
+  } catch (e: any) {
+    res.status(500).json(err("UPDATE_ERROR", e.message || "update failed"))
+  }
+})
+
+app.post("/api/agent/process", async (req, res) => {
+  const schema = z.object({
+    problemId: z.string(),
+    instruction: z.string(),
+    field: z.enum(["prompt", "choices", "explanation"]).optional(),
+    autoFix: z.boolean().optional()
+  })
+  const p = schema.safeParse(req.body)
+  if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message))
+
+  const prob = await prisma.problem.findUnique({ where: { id: p.data.problemId } })
+  if (!prob) return res.status(404).json(err("NOT_FOUND", "problem not found"))
+
+  const currentProblem = {
+    type: prob.type as "mcq" | "free",
+    prompt: prob.prompt,
+    choices: parseOrNull<string[]>(prob.choices),
+    answer: prob.answer,
+    explanation: prob.explanation || undefined,
+    difficulty: prob.difficulty || undefined,
+    objectives: parseOrNull<string[]>(prob.objectives),
+    rubric: parseOrNull(prob.rubric),
+    meta: parseOrNull(prob.meta) || {}
+  }
+
+  try {
+    const { ProblemManagementAgent } = await import("@sakumon/workflows/src/agent")
+    const agent = new ProblemManagementAgent()
+
+    const result = await agent.process({
+      problemId: p.data.problemId,
+      problem: currentProblem,
+      instruction: p.data.instruction,
+      field: p.data.field,
+      autoFix: p.data.autoFix
+    })
+
+    // 変更があった場合はDBを更新
+    if (result.changes.length > 0) {
+      await prisma.problem.update({
+        where: { id: p.data.problemId },
+        data: {
+          prompt: result.problem.prompt,
+          choices: result.problem.choices ? JSON.stringify(result.problem.choices) : null,
+          explanation: result.problem.explanation || null,
+        }
+      })
+    }
+
+    res.json(ok(result))
+  } catch (e: any) {
+    res.status(500).json(err("AGENT_ERROR", e.message || "agent processing failed"))
+  }
+})
+
+app.post("/api/problems/:id/auto-fix", async (req, res) => {
+  const schema = z.object({
+    issues: z.array(z.object({
+      field: z.enum(["prompt", "choices", "explanation", "answer"]),
+      issue: z.string(),
+      severity: z.enum(["critical", "warning", "info"]),
+      suggestion: z.string().optional()
+    }))
+  })
+  const p = schema.safeParse(req.body)
+  if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message))
+
+  const prob = await prisma.problem.findUnique({ where: { id: req.params.id } })
+  if (!prob) return res.status(404).json(err("NOT_FOUND", "problem not found"))
+
+  const currentProblem = {
+    type: prob.type as "mcq" | "free",
+    prompt: prob.prompt,
+    choices: parseOrNull<string[]>(prob.choices),
+    answer: prob.answer,
+    explanation: prob.explanation || undefined,
+    difficulty: prob.difficulty || undefined,
+    objectives: parseOrNull<string[]>(prob.objectives),
+    rubric: parseOrNull(prob.rubric),
+    meta: parseOrNull(prob.meta) || {}
+  }
+
+  try {
+    const { autoFixProblem } = await import("@sakumon/workflows/src/consistency")
+    const result = await autoFixProblem(currentProblem, p.data.issues)
+    res.json(ok(result))
+  } catch (e: any) {
+    res.status(500).json(err("AUTO_FIX_ERROR", e.message || "auto fix failed"))
+  }
+})
+
+app.get("/api/suggestions/:problemId", async (req, res) => {
+  const prob = await prisma.problem.findUnique({ where: { id: req.params.problemId } })
+  if (!prob) return res.status(404).json(err("NOT_FOUND", "problem not found"))
+
+  const { getOpenAI, MODELS } = await import("@sakumon/workflows/src/openai")
+  const openai = getOpenAI()
+
+  const problemData = {
+    type: prob.type,
+    prompt: prob.prompt,
+    choices: parseOrNull<string[]>(prob.choices),
+    answer: prob.answer,
+    explanation: prob.explanation
+  }
+
+  const prompt = `次の問題を詳しく分析し、実行可能で具体的な改善提案を生成してください。
+
+問題: ${JSON.stringify(problemData, null, 2)}
+
+各提案は、クリックしたらすぐ実行できる具体的な指示にしてください：
+
+【問題文の改善提案】
+- 現在の問題内容に即した具体的な変更や追加
+- 明確な方向性（より簡単に/より難しく/より明確に）
+- 20字以内で実行内容が分かる指示
+
+【選択肢の改善提案】（MCQの場合のみ）
+- 選択肢の具体的な改善方法
+- 誤答の理由を明確にする方法
+- 選択肢の並び順や表現の改善
+
+【解説の改善提案】
+- 解説の構造的な改善
+- 不足している情報の追加
+- より分かりやすくする具体的方法
+
+出力形式（JSON）:
+{
+  "prompt": ["具体的な指示1（20字以内）", "具体的な指示2", "具体的な指示3", "具体的な指示4"],
+  ${prob.type === 'mcq' ? '"choices": ["具体的な指示1", "具体的な指示2", "具体的な指示3", "具体的な指示4"],' : ''}
+  "explanation": ["具体的な指示1", "具体的な指示2", "具体的な指示3", "具体的な指示4"]
+}
+
+重要:
+- 曖昧な表現（「難易度を調整」「もっと良く」）は避ける
+- 実行内容が明確な指示にする（「〜を〜に変更」「〜を追加」）
+- 問題の実際の内容に即した提案にする
+- それぞれ異なる観点からの提案にする`
+
+  try {
+    const resp = await openai.responses.create({
+      model: MODELS.gen,
+      temperature: 0.7,
+      input: prompt,
+      text: { format: { type: "json_object" } }
+    } as any)
+    const text = (resp as any).output_text || "{}"
+    const suggestions = JSON.parse(text)
+    res.json(ok(suggestions))
+  } catch (e: any) {
+    // フォールバックとして固定のサジェストを返す
+    const fallback = {
+      prompt: ["もっと簡単に", "より詳しく", "具体例を追加", "文章を短く"],
+      choices: prob.type === 'mcq' ? ["より紛らわしく", "分かりやすく", "選択肢を詳しく", "具体的な数値に"] : undefined,
+      explanation: ["100字以内で", "ステップ毎に", "理由を詳しく", "注意点を追加"]
+    }
+    res.json(ok(fallback))
+  }
+})
+
 function parseOrNull<T = any>(v: any): T | null {
   if (!v) return null;
   try {

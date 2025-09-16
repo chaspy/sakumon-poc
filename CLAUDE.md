@@ -61,6 +61,10 @@ pnpm workspaceによるmonorepo構成。パッケージ間の依存は `workspac
 - `/api/bank/search` - 問題バンク検索
 - `/api/worksheets/:id/replace` - バンクから問題置換
 - `/api/export/pdf` - PDF出力（解答用紙オプション付き）
+- `/api/suggestions/:problemId` - 問題別AI改善提案生成
+- `/api/problems/:id/check-consistency` - 整合性チェック
+- `/api/problems/:id/auto-fix` - 自動修正
+- `/api/agent/process` - AI Agentによる統合処理
 
 **apps/web** - Vite + React UI
 - 単一画面での最短導線実装
@@ -74,6 +78,8 @@ pnpm workspaceによるmonorepo構成。パッケージ間の依存は `workspac
 - `generate.ts` - 問題生成（教科別ヒント、埋め込みベクトル重複除去）
 - `grade.ts` - 記述式採点ロジック
 - `openai.ts` - OpenAI APIクライアント設定
+- `consistency.ts` - 整合性チェック・自動修正ロジック
+- `agent.ts` - シングルエージェント（5つのツールを統合制御）
 
 **packages/pdf** - PDF生成
 - Puppeteer + MathJax使用
@@ -92,6 +98,16 @@ SQLite + Prisma ORM
 2. MCQ妥当性検証（4択確保、正解選択肢含有チェック）
 3. 埋め込みベクトルによる重複検出（cosine similarity > 0.9）
 4. DBへの永続化（position付きで順序管理）
+
+**AI Agentアーキテクチャ**
+- シングルエージェント（ProblemManagementAgent）が5つのツールを制御
+  - EditorTool: 問題文/選択肢/解説の編集
+  - ConsistencyCheckerTool: 論理的整合性チェック
+  - SuggestionGeneratorTool: 改善提案生成
+  - AutoFixerTool: 検出問題の自動修正
+  - QualityScorerTool: 品質スコアリング
+- ユーザー意図を分析し、適切なツール組み合わせを自動選択
+- ツール実行結果に基づく動的な追加アクション判断
 
 **エラーハンドリング**
 - 各APIエンドポイントで `{ok: boolean, data/error, meta: {traceId}}` 形式の統一レスポンス
@@ -120,6 +136,20 @@ SQLite + Prisma ORM
 1. `packages/schemas/src/problem.ts` の `type` enum拡張
 2. `packages/workflows/src/generate.ts` の生成プロンプト調整
 3. UI側の `apps/web/src/ui/App.tsx` で表示対応
+
+### AI Agentによる問題編集
+```typescript
+// エージェントを使った統合的な問題改善
+POST /api/agent/process
+{
+  "problemId": "xxx",
+  "instruction": "問題文をもっと具体的にして、整合性もチェックして",
+  "field": "prompt",  // オプション: 特定フィールドのみ編集
+  "autoFix": true      // オプション: 不整合を自動修正
+}
+
+// レスポンスには使用ツール、変更内容、品質スコア等が含まれる
+```
 
 ### デバッグ時のポート競合解決
 ```bash

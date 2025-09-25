@@ -1,7 +1,8 @@
 import "dotenv/config";
-import express from "express";
+import express, { Request, Response } from "express";
 import cors from "cors";
 import morgan from "morgan";
+import multer from "multer";
 import { z } from "zod";
 import { prisma } from "./db";
 import { generateWorksheet } from "@sakumon/workflows/src/generate";
@@ -13,6 +14,21 @@ app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("dev"));
 
+// Multer setup for file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  }
+});
+
 function ok(data: any, traceId?: string) {
   return { ok: true, data, meta: { traceId: traceId || randomId() } };
 }
@@ -23,7 +39,7 @@ function randomId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-app.post("/api/generate", async (req, res) => {
+app.post("/api/generate", async (req: Request, res: Response) => {
   const schema = z.object({ subject: z.string(), unit: z.string(), range: z.string().optional(), ratio: z.object({ mcq: z.number(), free: z.number() }).optional(), keywords: z.array(z.string()).optional(), objectives: z.array(z.string()).optional() });
   const p = schema.safeParse(req.body);
   if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message));
@@ -55,20 +71,20 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
-app.get("/api/worksheets/:id", async (req, res) => {
+app.get("/api/worksheets/:id", async (req: Request, res: Response) => {
   const id = req.params.id;
   const ws = await prisma.worksheet.findUnique({ where: { id } });
   if (!ws) return res.status(404).json(err("NOT_FOUND", "worksheet not found"));
   res.json(ok(ws));
 });
 
-app.get("/api/worksheets/:id/problems", async (req, res) => {
+app.get("/api/worksheets/:id/problems", async (req: Request, res: Response) => {
   const id = req.params.id;
   const items = await prisma.problem.findMany({ where: { worksheetId: id }, orderBy: { position: "asc" } });
   res.json(ok({ items: items.map(deserializeProblem) }));
 });
 
-app.post("/api/revise/:problemId", async (req, res) => {
+app.post("/api/revise/:problemId", async (req: Request, res: Response) => {
   const schema = z.object({ scope: z.enum(["prompt", "choices", "explanation"]).default("prompt"), instruction: z.string().min(1) });
   const p = schema.safeParse(req.body);
   if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message));
@@ -77,7 +93,7 @@ app.post("/api/revise/:problemId", async (req, res) => {
   // LLM最小呼び出し（scope別改稿）
   const { getOpenAI, MODELS } = await import("@sakumon/workflows/src/openai");
   const openai = getOpenAI();
-  const base = { type: prob.type, prompt: prob.prompt, choices: parseOrNull<string[]>(prob.choices), answer: prob.answer, explanation: prob.explanation };
+  const base = { type: prob.type, prompt: prob.prompt, choices: parseOrUndefined<string[]>(prob.choices), answer: prob.answer, explanation: prob.explanation };
   const prompt = `次の設問を、指示に従って${p.data.scope}のみを書き直してください。JSONのみ出力。
   problem: ${JSON.stringify(base)}
   instruction: ${p.data.instruction}`;
@@ -92,7 +108,7 @@ app.post("/api/revise/:problemId", async (req, res) => {
   }
 });
 
-app.post("/api/grade/mcq", async (req, res) => {
+app.post("/api/grade/mcq", async (req: Request, res: Response) => {
   const schema = z.object({ worksheetId: z.string(), answers: z.array(z.object({ problemId: z.string(), answer: z.string() })) });
   const p = schema.safeParse(req.body);
   if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message));
@@ -108,7 +124,7 @@ app.post("/api/grade/mcq", async (req, res) => {
   res.json(ok({ score: correct, total: p.data.answers.length, details }));
 });
 
-app.post("/api/grade/free", async (req, res) => {
+app.post("/api/grade/free", async (req: Request, res: Response) => {
   const schema = z.object({ answer: z.string(), rubric: z.any() });
   const p = schema.safeParse(req.body);
   if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message));
@@ -121,7 +137,7 @@ app.post("/api/grade/free", async (req, res) => {
   }
 });
 
-app.post("/api/bank/search", async (req, res) => {
+app.post("/api/bank/search", async (req: Request, res: Response) => {
   const schema = z.object({ subject: z.string(), unit: z.string(), tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(50).optional() })
   const p = schema.safeParse(req.body)
   if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message))
@@ -132,7 +148,7 @@ app.post("/api/bank/search", async (req, res) => {
   res.json(ok({ items }))
 })
 
-app.post("/api/export/pdf", async (req, res) => {
+app.post("/api/export/pdf", async (req: Request, res: Response) => {
   const schema = z.object({ worksheetId: z.string(), answerSheet: z.boolean().optional() });
   const p = schema.safeParse(req.body);
   if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message));
@@ -145,7 +161,7 @@ app.post("/api/export/pdf", async (req, res) => {
   res.send(Buffer.from(buf));
 });
 
-app.post("/api/worksheets/:id/replace", async (req, res) => {
+app.post("/api/worksheets/:id/replace", async (req: Request, res: Response) => {
   const wId = req.params.id
   const schema = z.object({ problemId: z.string(), bankItemId: z.string() })
   const p = schema.safeParse(req.body)
@@ -168,7 +184,7 @@ app.post("/api/worksheets/:id/replace", async (req, res) => {
   res.json(ok({ item: deserializeProblem(updated) }))
 })
 
-app.post("/api/problems/:id/check-consistency", async (req, res) => {
+app.post("/api/problems/:id/check-consistency", async (req: Request, res: Response) => {
   const schema = z.object({
     updatedField: z.enum(["prompt", "choices", "explanation"]).optional(),
     newValue: z.union([z.string(), z.array(z.string())]).optional()
@@ -183,13 +199,13 @@ app.post("/api/problems/:id/check-consistency", async (req, res) => {
   const currentProblem = {
     type: prob.type as "mcq" | "free",
     prompt: prob.prompt,
-    choices: parseOrNull<string[]>(prob.choices),
+    choices: parseOrUndefined<string[]>(prob.choices),
     answer: prob.answer,
     explanation: prob.explanation || undefined,
     difficulty: prob.difficulty || undefined,
-    objectives: parseOrNull<string[]>(prob.objectives),
-    rubric: parseOrNull(prob.rubric),
-    meta: parseOrNull(prob.meta) || {}
+    objectives: parseOrUndefined<string[]>(prob.objectives),
+    rubric: parseOrUndefined(prob.rubric),
+    meta: parseOrUndefined(prob.meta) || {}
   }
 
   // 更新後の問題を作成
@@ -217,7 +233,7 @@ app.post("/api/problems/:id/check-consistency", async (req, res) => {
   }
 })
 
-app.post("/api/problems/:id/update", async (req, res) => {
+app.post("/api/problems/:id/update", async (req: Request, res: Response) => {
   const schema = z.object({
     field: z.enum(["prompt", "choices", "answer", "explanation"]),
     value: z.union([z.string(), z.array(z.string())])
@@ -251,13 +267,13 @@ app.post("/api/problems/:id/update", async (req, res) => {
     const currentProblem = {
       type: updated.type as "mcq" | "free",
       prompt: updated.prompt,
-      choices: parseOrNull<string[]>(updated.choices),
+      choices: parseOrUndefined<string[]>(updated.choices),
       answer: updated.answer,
       explanation: updated.explanation || undefined,
       difficulty: updated.difficulty || undefined,
-      objectives: parseOrNull<string[]>(updated.objectives),
-      rubric: parseOrNull(updated.rubric),
-      meta: parseOrNull(updated.meta) || {}
+      objectives: parseOrUndefined<string[]>(updated.objectives),
+      rubric: parseOrUndefined(updated.rubric),
+      meta: parseOrUndefined(updated.meta) || {}
     }
 
     const { checkConsistency } = await import("@sakumon/workflows/src/consistency")
@@ -272,7 +288,7 @@ app.post("/api/problems/:id/update", async (req, res) => {
   }
 })
 
-app.post("/api/agent/process", async (req, res) => {
+app.post("/api/agent/process", async (req: Request, res: Response) => {
   const schema = z.object({
     problemId: z.string(),
     instruction: z.string(),
@@ -288,13 +304,13 @@ app.post("/api/agent/process", async (req, res) => {
   const currentProblem = {
     type: prob.type as "mcq" | "free",
     prompt: prob.prompt,
-    choices: parseOrNull<string[]>(prob.choices),
+    choices: parseOrUndefined<string[]>(prob.choices),
     answer: prob.answer,
     explanation: prob.explanation || undefined,
     difficulty: prob.difficulty || undefined,
-    objectives: parseOrNull<string[]>(prob.objectives),
-    rubric: parseOrNull(prob.rubric),
-    meta: parseOrNull(prob.meta) || {}
+    objectives: parseOrUndefined<string[]>(prob.objectives),
+    rubric: parseOrUndefined(prob.rubric),
+    meta: parseOrUndefined(prob.meta) || {}
   }
 
   try {
@@ -327,7 +343,7 @@ app.post("/api/agent/process", async (req, res) => {
   }
 })
 
-app.post("/api/problems/:id/auto-fix", async (req, res) => {
+app.post("/api/problems/:id/auto-fix", async (req: Request, res: Response) => {
   const schema = z.object({
     issues: z.array(z.object({
       field: z.enum(["prompt", "choices", "explanation", "answer"]),
@@ -345,13 +361,13 @@ app.post("/api/problems/:id/auto-fix", async (req, res) => {
   const currentProblem = {
     type: prob.type as "mcq" | "free",
     prompt: prob.prompt,
-    choices: parseOrNull<string[]>(prob.choices),
+    choices: parseOrUndefined<string[]>(prob.choices),
     answer: prob.answer,
     explanation: prob.explanation || undefined,
     difficulty: prob.difficulty || undefined,
-    objectives: parseOrNull<string[]>(prob.objectives),
-    rubric: parseOrNull(prob.rubric),
-    meta: parseOrNull(prob.meta) || {}
+    objectives: parseOrUndefined<string[]>(prob.objectives),
+    rubric: parseOrUndefined(prob.rubric),
+    meta: parseOrUndefined(prob.meta) || {}
   }
 
   try {
@@ -363,7 +379,7 @@ app.post("/api/problems/:id/auto-fix", async (req, res) => {
   }
 })
 
-app.get("/api/suggestions/:problemId", async (req, res) => {
+app.get("/api/suggestions/:problemId", async (req: Request, res: Response) => {
   const prob = await prisma.problem.findUnique({ where: { id: req.params.problemId } })
   if (!prob) return res.status(404).json(err("NOT_FOUND", "problem not found"))
 
@@ -373,7 +389,7 @@ app.get("/api/suggestions/:problemId", async (req, res) => {
   const problemData = {
     type: prob.type,
     prompt: prob.prompt,
-    choices: parseOrNull<string[]>(prob.choices),
+    choices: parseOrUndefined<string[]>(prob.choices),
     answer: prob.answer,
     explanation: prob.explanation
   }
@@ -433,12 +449,86 @@ app.get("/api/suggestions/:problemId", async (req, res) => {
   }
 })
 
+app.post("/api/ocr", upload.single('file'), async (req: Request, res: Response) => {
+  if (!req.file) {
+    return res.status(400).json(err("BAD_REQUEST", "File is required"));
+  }
+
+  const traceId = randomId();
+  const isPdf = req.file.mimetype === 'application/pdf';
+  const isImage = req.file.mimetype.startsWith('image/');
+  
+  try {
+    console.log(`[OCR] Processing ${isPdf ? 'PDF' : 'Image'}: ${req.file.originalname} (${req.file.size} bytes)`);
+    
+    let result;
+    
+    if (isPdf) {
+      // 一時的にPDF処理を無効化
+      throw new Error('PDF処理は現在メンテナンス中です。画像ファイル（PNG、JPG）をご利用ください。');
+      
+    } else if (isImage) {
+      const { extractTextFromImage, postProcessOCRText } = await import("@sakumon/workflows/src/ocr");
+      
+      const structuredOutput = req.body.structuredOutput === 'true';
+      const model = req.body.model || 'openai'; // デフォルトはOpenAI
+      const ocrText = await extractTextFromImage(req.file.buffer, structuredOutput, model);
+      const cleanedText = postProcessOCRText(ocrText);
+      
+      result = {
+        text: cleanedText,
+        processedPages: 1,
+        confidence: 0.85,
+        originalFileName: req.file.originalname,
+        fileSize: req.file.size
+      };
+    } else {
+      throw new Error('Unsupported file type');
+    }
+    
+    console.log(`[OCR] Successfully processed ${result.processedPages} page(s)`);
+    
+    res.json(ok(result, traceId));
+    
+  } catch (error: any) {
+    console.error(`[OCR] Processing failed:`, error);
+    res.status(500).json(err("OCR_ERROR", error.message || "OCR processing failed", traceId));
+  }
+});
+
+app.get("/api/ocr/models", async (req: Request, res: Response) => {
+  try {
+    const { getAvailableModels } = await import("@sakumon/workflows/src/ocr");
+    const models = getAvailableModels();
+    
+    const modelsWithInfo = models.map(model => ({
+      id: model,
+      name: model === 'openai' ? 'OpenAI GPT-4o-mini' : 'Google Gemini 2.5 Pro',
+      description: model === 'openai' ? 'OpenAI Vision API' : 'Google Gemini Vision API'
+    }));
+    
+    res.json(ok({ models: modelsWithInfo }));
+  } catch (error: any) {
+    console.error(`[API] Failed to get available models:`, error);
+    res.status(500).json(err("MODELS_ERROR", error.message || "Failed to get available models"));
+  }
+});
+
 function parseOrNull<T = any>(v: any): T | null {
   if (!v) return null;
   try {
     return JSON.parse(String(v)) as T;
   } catch {
     return null;
+  }
+}
+
+function parseOrUndefined<T = any>(v: any): T | undefined {
+  if (!v) return undefined;
+  try {
+    return JSON.parse(String(v)) as T;
+  } catch {
+    return undefined;
   }
 }
 

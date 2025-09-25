@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react'
 import './auth-theme.css'
 import { MathText } from './MathText'
+import { OCRUpload } from './OCRUpload'
 
 type Problem = {
   id?: string
@@ -283,6 +284,9 @@ export function App() {
         <div className="brand-badge">for TEACHERS</div>
       </div>
       <div className="center-lane">
+        {/* OCR機能 */}
+        <OCRUpload apiBase={apiBase} />
+        
         <div className="card">
           <div className="card-header">生成パネル</div>
           <div className="card-body">
@@ -334,7 +338,7 @@ export function App() {
                   ))
                 : items.map((p, i)=> {
                   const ansLabel = p.type==='mcq' && p.choices ? (()=>{ const idx = p.choices.findIndex(c=>c===p.answer); return idx>=0 ? String.fromCharCode(65+idx) : '' })() : ''
-                  const isProcessing = p.id && agentProcessing.has(p.id)
+                  const isProcessing = Boolean(p.id && agentProcessing.has(p.id))
                   const isExpanded = p.id === expandedProblem
 
                   return (
@@ -479,24 +483,31 @@ export function App() {
                                   borderRadius: '6px',
                                   fontSize: '0.9rem'
                                 }}
-                                value={customPrompts[p.id]?.prompt || ''}
-                                onChange={(e) => setCustomPrompts(prev => ({...prev, [p.id]: {...prev[p.id], prompt: e.target.value}}))}
+                                value={p.id ? (customPrompts[p.id]?.prompt || '') : ''}
+                                onChange={(e) => {
+                                  if (p.id) {
+                                    const problemId = p.id;
+                                    setCustomPrompts(prev => ({...prev, [problemId]: {...prev[problemId], prompt: e.target.value}}))
+                                  }
+                                }}
                                 onKeyPress={(e) => {
-                                  if (e.key === 'Enter' && customPrompts[p.id]?.prompt) {
-                                    revise(p.id!, 'prompt', customPrompts[p.id].prompt!)
-                                    setCustomPrompts(prev => ({...prev, [p.id]: {...prev[p.id], prompt: ''}}))
+                                  if (e.key === 'Enter' && p.id && customPrompts[p.id]?.prompt) {
+                                    const problemId = p.id;
+                                    revise(problemId, 'prompt', customPrompts[problemId].prompt!)
+                                    setCustomPrompts(prev => ({...prev, [problemId]: {...prev[problemId], prompt: ''}}))
                                   }
                                 }}
                               />
                               <button
                                 className="btn-suggest"
                                 onClick={() => {
-                                  if (customPrompts[p.id]?.prompt) {
-                                    revise(p.id!, 'prompt', customPrompts[p.id].prompt!)
-                                    setCustomPrompts(prev => ({...prev, [p.id]: {...prev[p.id], prompt: ''}}))
+                                  if (p.id && customPrompts[p.id]?.prompt) {
+                                    const problemId = p.id;
+                                    revise(problemId, 'prompt', customPrompts[problemId].prompt!)
+                                    setCustomPrompts(prev => ({...prev, [problemId]: {...prev[problemId], prompt: ''}}))
                                   }
                                 }}
-                                disabled={isProcessing || !customPrompts[p.id]?.prompt}
+                                disabled={isProcessing || !p.id || !customPrompts[p.id]?.prompt}
                               >
                                 実行
                               </button>
@@ -608,24 +619,31 @@ export function App() {
                                     borderRadius: '6px',
                                     fontSize: '0.9rem'
                                   }}
-                                  value={customPrompts[p.id]?.choices || ''}
-                                  onChange={(e) => setCustomPrompts(prev => ({...prev, [p.id]: {...prev[p.id], choices: e.target.value}}))}
+                                  value={p.id ? (customPrompts[p.id]?.choices || '') : ''}
+                                  onChange={(e) => {
+                                    if (p.id) {
+                                      const problemId = p.id;
+                                      setCustomPrompts(prev => ({...prev, [problemId]: {...prev[problemId], choices: e.target.value}}))
+                                    }
+                                  }}
                                   onKeyPress={(e) => {
-                                    if (e.key === 'Enter' && customPrompts[p.id]?.choices) {
-                                      revise(p.id!, 'choices', customPrompts[p.id].choices!)
-                                      setCustomPrompts(prev => ({...prev, [p.id]: {...prev[p.id], choices: ''}}))
+                                    if (e.key === 'Enter' && p.id && customPrompts[p.id]?.choices) {
+                                      const problemId = p.id;
+                                      revise(problemId, 'choices', customPrompts[problemId].choices!)
+                                      setCustomPrompts(prev => ({...prev, [problemId]: {...prev[problemId], choices: ''}}))
                                     }
                                   }}
                                 />
                                 <button
                                   className="btn-suggest"
                                   onClick={() => {
-                                    if (customPrompts[p.id]?.choices) {
-                                      revise(p.id!, 'choices', customPrompts[p.id].choices!)
-                                      setCustomPrompts(prev => ({...prev, [p.id]: {...prev[p.id], choices: ''}}))
+                                    if (p.id && customPrompts[p.id]?.choices) {
+                                      const problemId = p.id;
+                                      revise(problemId, 'choices', customPrompts[problemId].choices!)
+                                      setCustomPrompts(prev => ({...prev, [problemId]: {...prev[problemId], choices: ''}}))
                                     }
                                   }}
-                                  disabled={isProcessing || !customPrompts[p.id]?.choices}
+                                  disabled={isProcessing || !p.id || !customPrompts[p.id]?.choices}
                                 >
                                   実行
                                 </button>
@@ -765,24 +783,31 @@ export function App() {
                                   borderRadius: '6px',
                                   fontSize: '0.9rem'
                                 }}
-                                value={customPrompts[p.id]?.explanation || ''}
-                                onChange={(e) => setCustomPrompts(prev => ({...prev, [p.id]: {...prev[p.id], explanation: e.target.value}}))}
+                                value={p.id ? (customPrompts[p.id]?.explanation || '') : ''}
+                                onChange={(e) => {
+                                  if (p.id) {
+                                    const problemId = p.id;
+                                    setCustomPrompts(prev => ({...prev, [problemId]: {...prev[problemId], explanation: e.target.value}}))
+                                  }
+                                }}
                                 onKeyPress={(e) => {
-                                  if (e.key === 'Enter' && customPrompts[p.id]?.explanation) {
-                                    revise(p.id!, 'explanation', customPrompts[p.id].explanation!)
-                                    setCustomPrompts(prev => ({...prev, [p.id]: {...prev[p.id], explanation: ''}}))
+                                  if (e.key === 'Enter' && p.id && customPrompts[p.id]?.explanation) {
+                                    const problemId = p.id;
+                                    revise(problemId, 'explanation', customPrompts[problemId].explanation!)
+                                    setCustomPrompts(prev => ({...prev, [problemId]: {...prev[problemId], explanation: ''}}))
                                   }
                                 }}
                               />
                               <button
                                 className="btn-suggest"
                                 onClick={() => {
-                                  if (customPrompts[p.id]?.explanation) {
-                                    revise(p.id!, 'explanation', customPrompts[p.id].explanation!)
-                                    setCustomPrompts(prev => ({...prev, [p.id]: {...prev[p.id], explanation: ''}}))
+                                  if (p.id && customPrompts[p.id]?.explanation) {
+                                    const problemId = p.id;
+                                    revise(problemId, 'explanation', customPrompts[problemId].explanation!)
+                                    setCustomPrompts(prev => ({...prev, [problemId]: {...prev[problemId], explanation: ''}}))
                                   }
                                 }}
-                                disabled={isProcessing || !customPrompts[p.id]?.explanation}
+                                disabled={isProcessing || !p.id || !customPrompts[p.id]?.explanation}
                               >
                                 実行
                               </button>

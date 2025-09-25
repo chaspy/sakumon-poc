@@ -255,7 +255,7 @@ export class ProblemManagementAgent {
   private tools: Map<string, Tool>;
 
   constructor() {
-    this.tools = new Map([
+    this.tools = new Map<string, Tool>([
       ["Editor", new EditorTool()],
       ["ConsistencyChecker", new ConsistencyCheckerTool()],
       ["SuggestionGenerator", new SuggestionGeneratorTool()],
@@ -308,11 +308,11 @@ export class ProblemManagementAgent {
         case "ConsistencyChecker":
           consistencyReport = await tool.execute({ problem: currentProblem });
           reasoning += `整合性チェック: ${
-            consistencyReport.isConsistent ? "OK" : "問題あり"
+            consistencyReport?.isConsistent ? "OK" : "問題あり"
           }\n`;
 
           // 不整合があり、自動修正が有効な場合
-          if (!consistencyReport.isConsistent && request.autoFix) {
+          if (consistencyReport && !consistencyReport.isConsistent && request.autoFix) {
             toolPlan.push("AutoFixer");
             reasoning += "不整合検出 → 自動修正を実行\n";
           }
@@ -339,10 +339,10 @@ export class ProblemManagementAgent {
 
         case "QualityScorer":
           qualityScore = await tool.execute({ problem: currentProblem });
-          reasoning += `品質スコア: ${qualityScore.overallScore.toFixed(2)}\n`;
+          reasoning += `品質スコア: ${qualityScore?.overallScore?.toFixed(2) || "N/A"}\n`;
 
           // 品質が低い場合、改善提案を生成
-          if (qualityScore.overallScore < 0.7 && !suggestions) {
+          if (qualityScore && qualityScore.overallScore < 0.7 && !suggestions) {
             toolPlan.push("SuggestionGenerator");
             reasoning += "品質スコア低 → 改善提案を生成\n";
           }

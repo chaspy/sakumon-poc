@@ -50,13 +50,7 @@ type AgentResult = {
 }
 
 export function App() {
-  const [subject, setSubject] = useState('数学')
-  const [unit, setUnit] = useState('一次関数')
-  const [range, setRange] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [worksheetId, setWorksheetId] = useState<string | null>(null)
   const [items, setItems] = useState<Problem[]>([])
-  const [issues, setIssues] = useState<string[]>([])
 
   // 新しい状態
   const [suggestions, setSuggestions] = useState<Record<string, Suggestions>>({})
@@ -69,41 +63,8 @@ export function App() {
   const [editMode, setEditMode] = useState<Record<string, {prompt?: boolean, choices?: boolean, answer?: boolean, explanation?: boolean}>>({})
   const [editValues, setEditValues] = useState<Record<string, {prompt?: string, choices?: string[], answer?: string, explanation?: string}>>({})
 
-  const canExport = useMemo(() => !!worksheetId && items.length > 0, [worksheetId, items])
-
-  useEffect(() => {
-    const firstUnit = subject === '数学' ? '一次関数' : subject === '理科' ? '化学式' : '太平洋戦争'
-    setUnit(firstUnit)
-  }, [subject])
-
   const apiBase = 'http://localhost:3031'
 
-  const generate = async () => {
-    setLoading(true)
-    setIssues([])
-    setSuggestions({})
-    setConsistencyStatus({})
-    try {
-      const res = await fetch(`${apiBase}/api/generate`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ subject, unit, range })
-      })
-      const json = await res.json()
-      if (!json.ok) throw new Error(json.error?.message || 'failed')
-      setWorksheetId(json.data.worksheetId)
-      setItems(json.data.items)
-      setIssues(json.data.issues || [])
-      // 新規生成された問題のサジェストを自動取得
-      json.data.items.forEach((item: Problem) => {
-        if (item.id) fetchSuggestions(item.id)
-      })
-    } catch (e: any) {
-      alert(e.message)
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const fetchSuggestions = async (problemId: string) => {
     if (loadingSuggestions.has(problemId) || suggestions[problemId]) return
@@ -243,22 +204,6 @@ export function App() {
     setEditValues(prev => ({ ...prev, [problemId]: { ...prev[problemId], [field]: undefined } }))
   }
 
-  const exportPdf = async (answerSheet: boolean) => {
-    if (!worksheetId) return
-    const res = await fetch(`${apiBase}/api/export/pdf`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ worksheetId, answerSheet })
-    })
-    if (!res.ok) return alert('PDF出力に失敗しました')
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `worksheet-${worksheetId}${answerSheet?'-answer':''}.pdf`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
 
   const getConsistencyIcon = (problemId: string) => {
     const status = consistencyStatus[problemId]
@@ -271,16 +216,8 @@ export function App() {
 
   return (
     <div className="auth-shell">
-      {loading && (
-        <div className="loading-mask" role="status" aria-live="assertive" aria-label="生成中">
-          <div>
-            <div className="spinner" />
-            <div style={{textAlign:'center', color:'#fff', marginTop:12, fontWeight:700}}>生成中… 少々お待ちください</div>
-          </div>
-        </div>
-      )}
       <div className="brand">
-        <div className="brand-title">スタディサプリ問題生成</div>
+        <div className="brand-title">スタディサプリ問題管理</div>
         <div className="brand-badge">for TEACHERS</div>
       </div>
       <div className="center-lane">
@@ -288,55 +225,10 @@ export function App() {
         <OCRUpload apiBase={apiBase} />
         
         <div className="card">
-          <div className="card-header">生成パネル</div>
+          <div className="card-header">問題一覧</div>
           <div className="card-body">
-            <div className="row">
-              <label>科目
-                <select value={subject} onChange={e=>setSubject(e.target.value)}>
-                  <option>数学</option>
-                  <option>理科</option>
-                  <option>社会</option>
-                </select>
-              </label>
-              <label>単元
-                <select value={unit} onChange={e=>setUnit(e.target.value)}>
-                  {subject==='数学' ? (
-                    <option>一次関数</option>
-                  ) : subject==='理科' ? (
-                    <option>化学式</option>
-                  ) : (
-                    <option>太平洋戦争</option>
-                  )}
-                </select>
-              </label>
-              <label style={{minWidth:260}}>範囲/キーワード
-                <input value={range} onChange={e=>setRange(e.target.value)} placeholder="例: 直線の式・交点"/>
-              </label>
-            </div>
-            <div className="actions">
-              <button className="btn primary" onClick={generate} disabled={loading}>{loading?'生成中...':'10問生成'}</button>
-              <button className="btn ghost" onClick={()=>exportPdf(false)} disabled={!canExport}>PDF(問題)</button>
-              <button className="btn ghost" onClick={()=>exportPdf(true)} disabled={!canExport}>PDF(解答)</button>
-            </div>
-            {issues.length>0 && (
-              <div className="note">検証指摘: {issues.join(' / ')}</div>
-            )}
-            <div style={{height:10}}/>
             <div className="card-grid">
-              {loading && items.length === 0
-                ? Array.from({length:10}).map((_,i)=> (
-                    <div className="qcard skel" key={`skel-${i}`}>
-                      <div className="skeleton skel-line" style={{width:'30%'}}/>
-                      <div className="skeleton skel-line" style={{width:'92%'}}/>
-                      <div className="skeleton skel-line" style={{width:'86%'}}/>
-                      <div className="skeleton skel-line" style={{width:'70%'}}/>
-                      <div className="skeleton skel-choice" style={{width:'60%'}}/>
-                      <div className="skeleton skel-choice" style={{width:'65%'}}/>
-                      <div className="skeleton skel-choice" style={{width:'55%'}}/>
-                      <div className="skeleton skel-choice" style={{width:'50%'}}/>
-                    </div>
-                  ))
-                : items.map((p, i)=> {
+              {items.map((p, i)=> {
                   const ansLabel = p.type==='mcq' && p.choices ? (()=>{ const idx = p.choices.findIndex(c=>c===p.answer); return idx>=0 ? String.fromCharCode(65+idx) : '' })() : ''
                   const isProcessing = Boolean(p.id && agentProcessing.has(p.id))
                   const isExpanded = p.id === expandedProblem

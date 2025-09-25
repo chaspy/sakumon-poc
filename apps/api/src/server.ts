@@ -5,9 +5,7 @@ import morgan from "morgan";
 import multer from "multer";
 import { z } from "zod";
 import { prisma } from "./db";
-import { generateWorksheet } from "@sakumon/workflows/src/generate";
 import { renderPdfToBuffer } from "@sakumon/pdf";
-import { problemArraySchema } from "@sakumon/schemas";
 
 const app = express();
 app.use(cors());
@@ -39,37 +37,6 @@ function randomId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-app.post("/api/generate", async (req: Request, res: Response) => {
-  const schema = z.object({ subject: z.string(), unit: z.string(), range: z.string().optional(), ratio: z.object({ mcq: z.number(), free: z.number() }).optional(), keywords: z.array(z.string()).optional(), objectives: z.array(z.string()).optional() });
-  const p = schema.safeParse(req.body);
-  if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message));
-  try {
-    const { items, issues } = await generateWorksheet(p.data);
-    const ws = await prisma.worksheet.create({ data: { subject: p.data.subject, unit: p.data.unit, range: p.data.range || null } });
-    await prisma.$transaction(
-      items.map((it, i) =>
-        prisma.problem.create({
-          data: {
-            worksheetId: ws.id,
-            type: it.type,
-            prompt: it.prompt,
-            choices: it.choices ? JSON.stringify(it.choices) : null,
-            answer: it.answer,
-            explanation: it.explanation || null,
-            difficulty: it.difficulty || null,
-            objectives: it.objectives ? JSON.stringify(it.objectives) : null,
-            rubric: it.rubric ? JSON.stringify(it.rubric) : null,
-            position: i + 1,
-          },
-        })
-      )
-    );
-    const saved = await prisma.problem.findMany({ where: { worksheetId: ws.id }, orderBy: { position: "asc" } });
-    res.json(ok({ worksheetId: ws.id, items: saved.map(deserializeProblem), issues }));
-  } catch (e: any) {
-    res.status(500).json(err("GEN_ERROR", e.message || "generate failed"));
-  }
-});
 
 app.get("/api/worksheets/:id", async (req: Request, res: Response) => {
   const id = req.params.id;

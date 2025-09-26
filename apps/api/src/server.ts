@@ -1,4 +1,13 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+
+// ESモジュールでの__dirname相当を取得
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// プロジェクトルートの.envファイルを読み込む
+dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 import express, { Request, Response } from "express";
 import cors from "cors";
 import morgan from "morgan";
@@ -6,6 +15,12 @@ import multer from "multer";
 import { z } from "zod";
 import { prisma } from "./db";
 import { renderPdfToBuffer } from "@sakumon/pdf";
+import type * as WorkflowsAgentModule from "@sakumon/workflows/src/agent";
+import type * as WorkflowsConsistencyModule from "@sakumon/workflows/src/consistency";
+import type * as WorkflowsGradeModule from "@sakumon/workflows/src/grade";
+import type * as WorkflowsOcrModule from "@sakumon/workflows/src/ocr";
+import type * as WorkflowsOpenAiModule from "@sakumon/workflows/src/openai";
+import type * as WorkflowsParseOcrModule from "@sakumon/workflows/src/parseOCR";
 
 const app = express();
 app.use(cors());
@@ -38,6 +53,30 @@ function randomId() {
 }
 
 
+type WorkflowModuleMap = {
+  openai: typeof WorkflowsOpenAiModule;
+  grade: typeof WorkflowsGradeModule;
+  consistency: typeof WorkflowsConsistencyModule;
+  agent: typeof WorkflowsAgentModule;
+  ocr: typeof WorkflowsOcrModule;
+  parseOCR: typeof WorkflowsParseOcrModule;
+};
+
+async function loadWorkflowModule<K extends keyof WorkflowModuleMap>(module: K): Promise<WorkflowModuleMap[K]> {
+  const srcPath = `@sakumon/workflows/src/${module}` as const;
+  try {
+    return (await import(srcPath)) as WorkflowModuleMap[K];
+  } catch (error: any) {
+    const code = error?.code as string | undefined;
+    if (code === "ERR_MODULE_NOT_FOUND" || code === "ERR_UNKNOWN_FILE_EXTENSION") {
+      const distPath = `@sakumon/workflows/dist/${module}.js` as const;
+      return (await import(distPath)) as WorkflowModuleMap[K];
+    }
+    throw error;
+  }
+}
+
+
 app.get("/api/worksheets/:id", async (req: Request, res: Response) => {
   const id = req.params.id;
   const ws = await prisma.worksheet.findUnique({ where: { id } });
@@ -58,7 +97,7 @@ app.post("/api/revise/:problemId", async (req: Request, res: Response) => {
   const prob = await prisma.problem.findUnique({ where: { id: req.params.problemId } });
   if (!prob) return res.status(404).json(err("NOT_FOUND", "problem not found"));
   // LLM最小呼び出し（scope別改稿）
-  const { getOpenAI, MODELS } = await import("@sakumon/workflows/src/openai");
+  const { getOpenAI, MODELS } = await loadWorkflowModule("openai");
   const openai = getOpenAI();
   const base = { type: prob.type, prompt: prob.prompt, choices: parseOrUndefined<string[]>(prob.choices), answer: prob.answer, explanation: prob.explanation };
   const prompt = `次の設問を、指示に従って${p.data.scope}のみを書き直してください。JSONのみ出力。
@@ -92,15 +131,177 @@ app.post("/api/grade/mcq", async (req: Request, res: Response) => {
 });
 
 app.post("/api/grade/free", async (req: Request, res: Response) => {
-  const schema = z.object({ answer: z.string(), rubric: z.any() });
+  const schema = z.object({ answer: z.string(), rubric: z.any(), expectedAnswer: z.string().optional() });
   const p = schema.safeParse(req.body);
   if (!p.success) return res.status(400).json(err("BAD_REQUEST", p.error.message));
   try {
-    const { gradeFree } = await import("@sakumon/workflows/src/grade");
-    const result = await gradeFree(p.data.answer, p.data.rubric);
+    const { gradeFree } = await loadWorkflowModule("grade");
+    const result = await gradeFree(p.data.answer, p.data.rubric, p.data.expectedAnswer);
     res.json(ok(result));
   } catch (e: any) {
     res.status(500).json(err("GRADE_ERROR", e.message || "grade failed"));
+  }
+});
+
+// 複数問題の一括採点API
+app.post("/api/solve/grade", async (req: Request, res: Response) => {
+  const schema = z.object({
+    problems: z.array(z.object({
+      id: z.string().optional(),
+      type: z.enum(["mcq", "free"]),
+      prompt: z.string(),
+      choices: z.array(z.string()).optional(),
+      answer: z.string(),
+      explanation: z.string().optional(),
+      rubric: z.any().optional(),
+      meta: z.any().optional()
+    })),
+    userAnswers: z.record(z.string(), z.string()) // problemId -> answer
+  });
+  
+  const p = schema.safeParse(req.body);
+  if (!p.success) {
+    console.warn("[grade] invalid payload", p.error.flatten());
+    return res.status(400).json(err("BAD_REQUEST", p.error.message));
+  }
+  
+  try {
+    const { gradeMcq, gradeFree, generateIncorrectFeedback } = await loadWorkflowModule("grade");
+    const normalizedProblems = p.data.problems.map((problem, index) => ({
+      ...problem,
+      id: problem.id || `temp-${index}`
+    }));
+    const answerRecord = p.data.userAnswers;
+    
+    const results: Array<{
+      problemId: string;
+      type: 'mcq' | 'free';
+      correct?: boolean;
+      expected?: string;
+      mark?: '○' | '△' | '×';
+      comment?: string;
+      userAnswer: string;
+    }> = [];
+    
+    let totalScore = 0;
+    let maxScore = 0;
+    
+    // MCQ問題をまとめて採点
+    const mcqProblems = normalizedProblems.filter(prob => prob.type === 'mcq');
+    const mcqAnswers = mcqProblems.map(prob => ({
+      problemId: prob.id!,
+      answer: answerRecord[prob.id!] || ''
+    }));
+    
+    if (mcqProblems.length > 0) {
+      const mcqResult = gradeMcq(mcqAnswers, mcqProblems);
+      totalScore += mcqResult.score;
+      maxScore += mcqResult.total;
+      
+      mcqResult.details.forEach(detail => {
+        results.push({
+          problemId: detail.problemId,
+          type: 'mcq',
+          correct: detail.correct,
+          expected: detail.expected,
+          userAnswer: answerRecord[detail.problemId] || ''
+        });
+      });
+    }
+    
+    // Free問題を個別に採点
+    const freeProblems = normalizedProblems.filter(prob => prob.type === 'free');
+    const scoreMap = { '○': 1, '△': 0.5, '×': 0 } as const;
+    const freeEvaluations = await Promise.all(freeProblems.map(async (problem) => {
+      const userAnswer = answerRecord[problem.id!] || '';
+      const rubric = problem.rubric || {
+        maxPoints: 1,
+        criteria: [{ name: '正答性', desc: '正しい答えかどうか', points: 1 }]
+      };
+
+      try {
+        const freeResult = await gradeFree(userAnswer, rubric, problem.answer);
+        return {
+          record: {
+            problemId: problem.id!,
+            type: 'free' as const,
+            mark: freeResult.mark,
+            comment: freeResult.comment,
+            userAnswer,
+          },
+          obtained: scoreMap[freeResult.mark] ?? 0,
+          possible: 1,
+        };
+      } catch (error) {
+        console.warn('[grade/free] fallback error', {
+          problemId: problem.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return {
+          record: {
+            problemId: problem.id!,
+            type: 'free' as const,
+            mark: '×' as const,
+            comment: 'エラーが発生しました',
+            userAnswer,
+          },
+          obtained: 0,
+          possible: 1,
+        };
+      }
+    }));
+
+    freeEvaluations.forEach(({ record, obtained, possible }) => {
+      results.push(record);
+      totalScore += obtained;
+      maxScore += possible;
+    });
+
+    const incorrectResults = results.filter((res) => {
+      if (res.type === 'mcq') return res.correct === false;
+      if (res.type === 'free') return res.mark !== '○';
+      return false;
+    });
+
+    if (incorrectResults.length > 0) {
+      await Promise.all(
+        incorrectResults.map(async (entry) => {
+          const problem = normalizedProblems.find((prob) => prob.id === entry.problemId);
+          if (!problem) return;
+          try {
+            const feedback = await generateIncorrectFeedback(problem as any, entry.userAnswer);
+            if (feedback) {
+              entry.comment = entry.comment
+                ? `${entry.comment}\n${feedback}`
+                : feedback;
+            }
+          } catch (error) {
+            console.warn('[grade/feedback] error while enriching feedback', {
+              problemId: entry.problemId,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+        })
+      );
+    }
+    
+    const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+    
+    res.json(ok({
+      totalScore,
+      maxScore,
+      percentage,
+      results,
+      summary: {
+        totalProblems: normalizedProblems.length,
+        mcqProblems: mcqProblems.length,
+        freeProblems: freeProblems.length
+      }
+    }));
+    
+  } catch (e: any) {
+    console.error('Bulk grading error:', e);
+    res.status(500).json(err("GRADE_ERROR", e.message || "bulk grading failed"));
   }
 });
 
@@ -188,7 +389,7 @@ app.post("/api/problems/:id/check-consistency", async (req: Request, res: Respon
   }
 
   try {
-    const { checkConsistency } = await import("@sakumon/workflows/src/consistency")
+    const { checkConsistency } = await loadWorkflowModule("consistency")
     const result = await checkConsistency(
       updatedProblem,
       p.data.updatedField,
@@ -243,7 +444,7 @@ app.post("/api/problems/:id/update", async (req: Request, res: Response) => {
       meta: parseOrUndefined(updated.meta) || {}
     }
 
-    const { checkConsistency } = await import("@sakumon/workflows/src/consistency")
+    const { checkConsistency } = await loadWorkflowModule("consistency")
     const consistencyResult = await checkConsistency(currentProblem)
 
     res.json(ok({
@@ -281,7 +482,7 @@ app.post("/api/agent/process", async (req: Request, res: Response) => {
   }
 
   try {
-    const { ProblemManagementAgent } = await import("@sakumon/workflows/src/agent")
+    const { ProblemManagementAgent } = await loadWorkflowModule("agent")
     const agent = new ProblemManagementAgent()
 
     const result = await agent.process({
@@ -338,7 +539,7 @@ app.post("/api/problems/:id/auto-fix", async (req: Request, res: Response) => {
   }
 
   try {
-    const { autoFixProblem } = await import("@sakumon/workflows/src/consistency")
+    const { autoFixProblem } = await loadWorkflowModule("consistency")
     const result = await autoFixProblem(currentProblem, p.data.issues)
     res.json(ok(result))
   } catch (e: any) {
@@ -350,7 +551,7 @@ app.get("/api/suggestions/:problemId", async (req: Request, res: Response) => {
   const prob = await prisma.problem.findUnique({ where: { id: req.params.problemId } })
   if (!prob) return res.status(404).json(err("NOT_FOUND", "problem not found"))
 
-  const { getOpenAI, MODELS } = await import("@sakumon/workflows/src/openai")
+  const { getOpenAI, MODELS } = await loadWorkflowModule("openai")
   const openai = getOpenAI()
 
   const problemData = {
@@ -435,7 +636,7 @@ app.post("/api/ocr", upload.single('file'), async (req: Request, res: Response) 
       throw new Error('PDF処理は現在メンテナンス中です。画像ファイル（PNG、JPG）をご利用ください。');
       
     } else if (isImage) {
-      const { extractTextFromImage, postProcessOCRText } = await import("@sakumon/workflows/src/ocr");
+      const { extractTextFromImage, postProcessOCRText } = await loadWorkflowModule("ocr");
       
       const structuredOutput = req.body.structuredOutput === 'true';
       const model = req.body.model || 'openai'; // デフォルトはOpenAI
@@ -465,7 +666,7 @@ app.post("/api/ocr", upload.single('file'), async (req: Request, res: Response) 
 
 app.get("/api/ocr/models", async (req: Request, res: Response) => {
   try {
-    const { getAvailableModels } = await import("@sakumon/workflows/src/ocr");
+    const { getAvailableModels } = await loadWorkflowModule("ocr");
     const models = getAvailableModels();
     
     const modelsWithInfo = models.map(model => ({
@@ -474,10 +675,45 @@ app.get("/api/ocr/models", async (req: Request, res: Response) => {
       description: model === 'openai' ? 'OpenAI Vision API' : 'Google Gemini Vision API'
     }));
     
+    // Geminiを上に表示
+    modelsWithInfo.sort((a, b) => {
+      if (a.id === 'gemini') return -1;
+      if (b.id === 'gemini') return 1;
+      return 0;
+    });
+    
     res.json(ok({ models: modelsWithInfo }));
   } catch (error: any) {
     console.error(`[API] Failed to get available models:`, error);
     res.status(500).json(err("MODELS_ERROR", error.message || "Failed to get available models"));
+  }
+});
+
+// OCRテキストをパースして問題形式に変換
+app.post("/api/ocr/parse", async (req: Request, res: Response) => {
+  const traceId = randomId();
+  try {
+    const { text } = req.body;
+    
+    if (!text) {
+      return res.status(400).json(err("BAD_REQUEST", "Text is required", traceId));
+    }
+
+    // parseOCRText関数をインポートして使用
+    const { parseOCRText } = await loadWorkflowModule("parseOCR");
+    const result = parseOCRText(text);
+    
+    if (result.parseErrors.length > 0) {
+      console.warn('[API] OCR parse warnings:', result.parseErrors);
+    }
+    
+    res.json(ok({ 
+      problems: result.problems,
+      warnings: result.parseErrors 
+    }, traceId));
+  } catch (error: any) {
+    console.error(`[API] Failed to parse OCR text:`, error);
+    res.status(500).json(err("PARSE_ERROR", error.message || "Failed to parse OCR text", traceId));
   }
 });
 

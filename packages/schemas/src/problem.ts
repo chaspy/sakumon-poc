@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const problemSchema = z.object({
+  id: z.string().optional(), // UI tracking用（DBに保存時は自動生成される）
   type: z.enum(["mcq", "free"]),
   prompt: z.string(),
   choices: z.array(z.string()).optional(),

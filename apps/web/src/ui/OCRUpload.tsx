@@ -10,6 +10,7 @@ interface OCRResult {
 
 interface OCRUploadProps {
   apiBase: string
+  onSolveProblems?: (ocrText: string, imageData: string) => void
 }
 
 interface ModelInfo {
@@ -18,14 +19,15 @@ interface ModelInfo {
   description: string
 }
 
-export function OCRUpload({ apiBase }: OCRUploadProps) {
+export function OCRUpload({ apiBase, onSolveProblems }: OCRUploadProps) {
   const [isUploading, setIsUploading] = useState(false)
   const [ocrResult, setOcrResult] = useState<OCRResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [structuredOutput, setStructuredOutput] = useState(true)
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([])
-  const [selectedModel, setSelectedModel] = useState('openai')
+  const [selectedModel, setSelectedModel] = useState('gemini')
+  const [uploadedImageData, setUploadedImageData] = useState<string | null>(null)
   
   const fileInputRef = useRef<HTMLInputElement>(null)
   
@@ -72,6 +74,15 @@ export function OCRUpload({ apiBase }: OCRUploadProps) {
     setIsUploading(true)
     setError(null)
     setOcrResult(null)
+
+    // 画像データをBase64で保存
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setUploadedImageData(reader.result)
+      }
+    }
+    reader.readAsDataURL(file)
 
     const formData = new FormData()
     formData.append('file', file)
@@ -153,6 +164,13 @@ export function OCRUpload({ apiBase }: OCRUploadProps) {
   const clearResult = () => {
     setOcrResult(null)
     setError(null)
+    setUploadedImageData(null)
+  }
+
+  const handleSolveProblems = () => {
+    if (ocrResult && uploadedImageData && onSolveProblems) {
+      onSolveProblems(ocrResult.text, uploadedImageData)
+    }
   }
 
   return (
@@ -302,17 +320,49 @@ export function OCRUpload({ apiBase }: OCRUploadProps) {
                 信頼度: {Math.round(ocrResult.confidence * 100)}%)
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
+                {structuredOutput && onSolveProblems && (
+                  <button
+                    className="btn primary"
+                    onClick={handleSolveProblems}
+                    style={{ 
+                      fontSize: '0.85rem', 
+                      padding: '8px 14px', 
+                      backgroundColor: '#28a745', 
+                      borderColor: '#28a745',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      lineHeight: '1.2'
+                    }}
+                  >
+                    📝 問題を解く
+                  </button>
+                )}
                 <button
                   className="btn primary"
                   onClick={copyToClipboard}
-                  style={{ fontSize: '0.85rem', padding: '6px 12px' }}
+                  style={{ 
+                    fontSize: '0.85rem', 
+                    padding: '8px 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    lineHeight: '1.2'
+                  }}
                 >
-                  📋 コピー
+                  📋 OCRテキストをコピー
                 </button>
                 <button
                   className="btn ghost"
                   onClick={clearResult}
-                  style={{ fontSize: '0.85rem', padding: '6px 12px' }}
+                  style={{ 
+                    fontSize: '0.85rem', 
+                    padding: '8px 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    lineHeight: '1.2'
+                  }}
                 >
                   🗑️ クリア
                 </button>

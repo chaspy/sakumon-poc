@@ -89,7 +89,9 @@ nuke:
 	-@pkill -f "node\s+.*apps/api/dist/server.js" || true
 	@$(MAKE) free-ports
 
-start: build-packages free-ports
+start: build-packages
+	@$(MAKE) stop 2>/dev/null || true
+	@$(MAKE) free-ports
 	@echo "▶ API:  http://localhost:$(API_PORT)"
 	@echo "▶ Web:  http://localhost:$(WEB_PORT)"
 	@echo "(Ctrl+Cで停止)"
